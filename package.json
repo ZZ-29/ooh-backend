@@ -1,0 +1,9 @@
+{
+  "name": "ooh-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Relogio que verifica lembretes do Ooh! e Ooh! Saude e dispara notificacoes push",
+  "dependencies": {
+    "firebase-admin": "^12.1.0"
+  }
+}
