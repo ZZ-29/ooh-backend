@@ -1,6 +1,10 @@
 // Funcao do Vercel - versao da "porta" que o cron-job.org vai bater
 // Faz a mesma coisa que o check-reminders.js do GitHub Actions,
 // mas agora e chamada por um servico externo mais confiavel para horarios.
+//
+// ATUALIZADO: agora com logs detalhados em cada etapa, e so marca
+// "enviado: true" quando o envio realmente funciona (antes marcava
+// sempre, mesmo em caso de erro, o que escondia falhas para sempre).
 
 const admin = require('firebase-admin');
 
@@ -19,14 +23,20 @@ async function processarColecao(db, nomeColecao, tituloPadrao) {
   const agora = Date.now();
   const snap = await db.collection(nomeColecao).where('enviado', '==', false).get();
 
+  console.log(`[${nomeColecao}] pendentes na consulta: ${snap.size}`);
+
   if (snap.empty) {
     return { colecao: nomeColecao, pendentes: 0, enviados: 0 };
   }
 
   const vencidos = snap.docs.filter((doc) => {
     const dados = doc.data();
-    return typeof dados.dt === 'number' && dados.dt <= agora;
+    const ok = typeof dados.dt === 'number' && dados.dt <= agora;
+    console.log(`[${nomeColecao}] doc ${doc.id}: dt=${dados.dt} (tipo ${typeof dados.dt}) agora=${agora} vencido=${ok}`);
+    return ok;
   });
+
+  console.log(`[${nomeColecao}] vencidos para processar agora: ${vencidos.length}`);
 
   let enviados = 0;
 
@@ -34,24 +44,27 @@ async function processarColecao(db, nomeColecao, tituloPadrao) {
     const dados = doc.data();
 
     if (!dados.token) {
+      console.log(`[${nomeColecao}] doc ${doc.id} sem token, marcando como enviado (nao ha como notificar).`);
       await doc.ref.update({ enviado: true });
       continue;
     }
 
     try {
-      await admin.messaging().send({
+      const resposta = await admin.messaging().send({
         token: dados.token,
         data: {
           title: tituloPadrao,
           body: String(dados.txt || '')
         }
       });
+      console.log(`[${nomeColecao}] doc ${doc.id} ENVIADO com sucesso. Resposta FCM:`, resposta);
       enviados++;
+      // So marca como enviado quando o FCM realmente aceitou a mensagem
+      await doc.ref.update({ enviado: true });
     } catch (err) {
-      console.error(`Erro ao enviar ${doc.id}:`, err.message);
+      console.error(`[${nomeColecao}] doc ${doc.id} FALHOU ao enviar. Codigo: ${err.code} | Mensagem: ${err.message}`);
+      // NAO marca enviado:true aqui -> vai tentar de novo no proximo ciclo do cron
     }
-
-    await doc.ref.update({ enviado: true });
   }
 
   return { colecao: nomeColecao, pendentes: snap.size, enviados };
